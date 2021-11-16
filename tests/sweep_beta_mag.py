@@ -15,12 +15,11 @@ design_region_resolution = int(2*resolution)
 beta = 1e6
 dx = 2.0
 dy = 2.0
-filename = "u_sweep"
+filename = "beta_mag_sweep"
+filter_radius = 0.2
 
-u_bank = np.linspace(0,1,15)
-idx = 37
-idx2 = 78
-smoothing_radius = 0.05
+beta_list = np.logspace(0,4,20).tolist()
+
 # ---------------------------------------- #
 # main routine
 # ---------------------------------------- #
@@ -36,17 +35,17 @@ eig_parity = mp.EVEN_Y + mp.ODD_Z
 
 design_region_size = mp.Vector3(dx,dy)
 Nx = int(design_region_resolution*design_region_size.x) + 1
+Ny = int(design_region_resolution*design_region_size.y) + 1
 
 ## ensure reproducible results
 np.random.seed(314159)
 
 ## random design region
-#p = np.random.rand(Nx)
-p = np.zeros((Nx,))
-p[idx-1:idx2] = 1
+p = np.random.rand(Nx*Ny)
 
 ## random epsilon perturbation for design region
 deps = 1e-5
+dp = deps*np.random.rand(Nx*Ny)
 
 w = 1.0
 waveguide_geometry = [mp.Block(material=silicon,
@@ -61,10 +60,10 @@ sources = [mp.EigenModeSource(src=mp.GaussianSource(fcen,fwidth=df),
                               eig_band=1,
                               eig_parity=eig_parity)]
 
-matgrid = mp.MaterialGrid(mp.Vector3(Nx),
+matgrid = mp.MaterialGrid(mp.Vector3(Nx,Ny),
                             mp.air,
                             silicon,
-                            weights=np.ones((Nx,)),
+                            weights=np.ones((Nx,Ny)),
                             do_averaging=True)
 
 matgrid_region = mpa.DesignRegion(matgrid,
@@ -101,45 +100,57 @@ opt = mpa.OptimizationProblem(
     design_regions=[matgrid_region],
     frequencies=frequencies)
 
-grid = np.linspace(-dx/2,dx/2,Nx)
 def mapping(x,r):
-    kernel = np.where(np.abs(grid**2) <= r**2,
-        (1 - np.sqrt(abs(grid**2)) / r), 0)
-    kernel = kernel / np.sum(kernel.flatten())
-    kernel = np.pad(kernel,(Nx,Nx),mode='edge')
-    x = np.pad(x,(Nx,Nx),mode='edge')
-    return np.convolve(x,kernel,mode="same")[Nx:2*Nx]
+    filtered_field = mpa.conic_filter(x,
+                                      r,
+                                      design_region_size.x,
+                                      design_region_size.y,
+                                      design_region_resolution)
 
-f_list = []
-new_method = []
-old_method = []
-'''#opt.update_design([mapping(p,smoothing_radius)],beta=1e6)
-opt.update_design([mpa.tanh_projection(mapping(p,smoothing_radius),1e6,0.5)],beta=0)
-opt.plot2D(True)
-plt.show()
-quit()'''
-for ui, u in enumerate(u_bank):
-    '''perturb parameter'''
-    p[idx] = u
+    return filtered_field.flatten()
 
-    '''first simulate the new method with smoothing'''
+def mapping_old(x,r,beta):
+    filtered_field = mpa.conic_filter(x,
+                                      r,
+                                      design_region_size.x,
+                                      design_region_size.y,
+                                      design_region_resolution)
+
+    y = filtered_field.flatten()
+    if beta == 0:
+        return y
+    else:
+        return mpa.tanh_projection(y,beta,0.5).flatten()
+
+l2_new_list = [] #l2 norm of the gradient with hybrid levelset and subpixel smoothing
+l2_old_list = [] #l2 norm of the gradient without
+for bi, b in enumerate(beta_list):
+    ''' test the new hybrid method and compute the l2 norm of the gradient'''
     opt.design_regions[0].design_parameters.do_averaging = True
-    f, _ = opt([mapping(p,smoothing_radius)],beta=1e6,need_gradient=False)
-    new_method.append(f)
-
-    '''next simulate the old method without smoothing'''
+    opt.update_design([mapping(p,filter_radius)],beta=b)
+    f, adjsol_grad = opt()
+    bp_adjsol_grad = tensor_jacobian_product(mapping,0)(p,filter_radius,adjsol_grad)
+    l2_new_list.append(np.linalg.norm(bp_adjsol_grad))
+    
+    ''' test the old method and compute the l2 norm of the gradient'''
     opt.design_regions[0].design_parameters.do_averaging = False
-    f, _ = opt([mpa.tanh_projection(mapping(p,smoothing_radius),1e6,0.5)],beta=0,need_gradient=False)
-    old_method.append(f)
+    opt.update_design([mapping_old(p,filter_radius,b)],beta=0)
+    f, adjsol_grad = opt()
+    bp_adjsol_grad = tensor_jacobian_product(mapping_old,0)(p,filter_radius,b,adjsol_grad)
+
+    l2_old_list.append(np.linalg.norm(bp_adjsol_grad))
+    
+print(l2_new_list)
+print(l2_old_list)
 
 plt.figure()
-plt.plot(u_bank,new_method,"o-",label="hybrid level-set")
-plt.plot(u_bank,old_method,"o-",label="traditional density method")
-plt.legend()
+plt.loglog(np.array(beta_list),l2_new_list,"o-",label="Hybrid method")
+plt.loglog(np.array(beta_list),l2_old_list,"o-",label="Traditional density method")
 plt.grid(True)
-plt.xlabel('$u_k$')
-plt.ylabel("$f(u)$")
+plt.legend()
+plt.xlabel('β')
+plt.ylabel("L2 norm of gradient")
 if mp.am_master():
     plt.savefig(filename+".png")
-    np.savez(filename+".npz",u_bank=u_bank,new_method=new_method,old_method=old_method)
+    np.savez(filename+".npz",beta_list=beta_list,l2_new_list=l2_new_list,l2_old_list=l2_old_list)
     plt.show()

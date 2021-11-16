@@ -12,15 +12,13 @@ from matplotlib import pyplot as plt
 
 resolution = 30
 design_region_resolution = int(2*resolution)
-beta = 1e6
 dx = 2.0
 dy = 2.0
-filename = "u_sweep"
+filename = "beta_sweep_new_{}".format(resolution)
+filter_radius = 0.2
 
-u_bank = np.linspace(0,1,15)
-idx = 37
-idx2 = 78
-smoothing_radius = 0.05
+beta_list = [0] + np.logspace(0,5,10).tolist()
+
 # ---------------------------------------- #
 # main routine
 # ---------------------------------------- #
@@ -35,18 +33,19 @@ boundary_layers = [mp.PML(thickness=dpml)]
 eig_parity = mp.EVEN_Y + mp.ODD_Z
 
 design_region_size = mp.Vector3(dx,dy)
+design_region_resolution = int(2*resolution)
 Nx = int(design_region_resolution*design_region_size.x) + 1
+Ny = int(design_region_resolution*design_region_size.y) + 1
 
 ## ensure reproducible results
 np.random.seed(314159)
 
 ## random design region
-#p = np.random.rand(Nx)
-p = np.zeros((Nx,))
-p[idx-1:idx2] = 1
+p = np.random.rand(Nx*Ny)
 
 ## random epsilon perturbation for design region
 deps = 1e-5
+dp = deps*np.random.rand(Nx*Ny)
 
 w = 1.0
 waveguide_geometry = [mp.Block(material=silicon,
@@ -61,11 +60,11 @@ sources = [mp.EigenModeSource(src=mp.GaussianSource(fcen,fwidth=df),
                               eig_band=1,
                               eig_parity=eig_parity)]
 
-matgrid = mp.MaterialGrid(mp.Vector3(Nx),
+matgrid = mp.MaterialGrid(mp.Vector3(Nx,Ny),
                             mp.air,
                             silicon,
-                            weights=np.ones((Nx,)),
-                            do_averaging=True)
+                            weights=np.ones((Nx,Ny)),
+                            do_averaging=False)
 
 matgrid_region = mpa.DesignRegion(matgrid,
                                     volume=mp.Volume(center=mp.Vector3(),
@@ -101,45 +100,51 @@ opt = mpa.OptimizationProblem(
     design_regions=[matgrid_region],
     frequencies=frequencies)
 
-grid = np.linspace(-dx/2,dx/2,Nx)
-def mapping(x,r):
-    kernel = np.where(np.abs(grid**2) <= r**2,
-        (1 - np.sqrt(abs(grid**2)) / r), 0)
-    kernel = kernel / np.sum(kernel.flatten())
-    kernel = np.pad(kernel,(Nx,Nx),mode='edge')
-    x = np.pad(x,(Nx,Nx),mode='edge')
-    return np.convolve(x,kernel,mode="same")[Nx:2*Nx]
+def mapping(x,filter_radius):
+    filtered_field = mpa.conic_filter(x,
+                                      filter_radius,
+                                      design_region_size.x,
+                                      design_region_size.y,
+                                      design_region_resolution)
 
-f_list = []
-new_method = []
-old_method = []
-'''#opt.update_design([mapping(p,smoothing_radius)],beta=1e6)
-opt.update_design([mpa.tanh_projection(mapping(p,smoothing_radius),1e6,0.5)],beta=0)
-opt.plot2D(True)
-plt.show()
-quit()'''
-for ui, u in enumerate(u_bank):
-    '''perturb parameter'''
-    p[idx] = u
+    return filtered_field.flatten()
 
-    '''first simulate the new method with smoothing'''
-    opt.design_regions[0].design_parameters.do_averaging = True
-    f, _ = opt([mapping(p,smoothing_radius)],beta=1e6,need_gradient=False)
-    new_method.append(f)
+smoothing = [False,True]
+no_smoothing_list = []
+smoothing_list = []
+for si, s in enumerate(smoothing):
+    for bi, b in enumerate(beta_list):
+        opt.design_regions[0].design_parameters.do_averaging = s
+        beta = b
 
-    '''next simulate the old method without smoothing'''
-    opt.design_regions[0].design_parameters.do_averaging = False
-    f, _ = opt([mpa.tanh_projection(mapping(p,smoothing_radius),1e6,0.5)],beta=0,need_gradient=False)
-    old_method.append(f)
+        opt.update_design([mapping(p,filter_radius)],beta=beta)
+
+        f, adjsol_grad = opt()
+        bp_adjsol_grad = tensor_jacobian_product(mapping,0)(p,filter_radius,adjsol_grad)
+        if bp_adjsol_grad.ndim < 2:
+            bp_adjsol_grad = np.expand_dims(bp_adjsol_grad,axis=1)
+        bp_adjsol_grad_m = (dp[None,:]@bp_adjsol_grad).flatten()
+
+        opt.update_design([mapping(p+dp/2,filter_radius)],beta=beta)
+        f_pp, _ = opt(need_gradient=False)
+        opt.update_design([mapping(p-dp/2,filter_radius)],beta=beta)
+        f_pm, _ = opt(need_gradient=False)
+        fd_grad = f_pp-f_pm
+        rel_error = np.abs(bp_adjsol_grad_m-fd_grad) / np.abs(fd_grad)
+        print(rel_error)
+        if s:
+            smoothing_list.append(rel_error)
+        else:
+            no_smoothing_list.append(rel_error)
 
 plt.figure()
-plt.plot(u_bank,new_method,"o-",label="hybrid level-set")
-plt.plot(u_bank,old_method,"o-",label="traditional density method")
+plt.loglog(beta_list,smoothing_list,"o-",label="With smoothing")
+plt.loglog(beta_list,no_smoothing_list,"o-",label="Without smoothing")
 plt.legend()
 plt.grid(True)
-plt.xlabel('$u_k$')
-plt.ylabel("$f(u)$")
+plt.xlabel('β')
+plt.ylabel("Relative error")
 if mp.am_master():
     plt.savefig(filename+".png")
-    np.savez(filename+".npz",u_bank=u_bank,new_method=new_method,old_method=old_method)
+    np.savez("beta_sweep.npz",beta_list=beta_list,smoothing_list=smoothing_list,no_smoothing_list=no_smoothing_list)
     plt.show()
