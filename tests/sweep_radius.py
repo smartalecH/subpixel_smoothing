@@ -18,7 +18,7 @@ dy = 2.0
 filename = "radius_sweep"
 
 #filter_radius = np.logspace(2,0.5*np.log10(design_region_resolution*dx),11) / design_region_resolution
-filter_radius = np.linspace(2,0.5*design_region_resolution*dx,10) / design_region_resolution
+filter_radius = np.linspace(2,0.5*design_region_resolution*dx,11) / design_region_resolution
 # ---------------------------------------- #
 # main routine
 # ---------------------------------------- #
@@ -132,6 +132,7 @@ plt.plot(np.array(filter_radius),radius_list,"o-")
 plt.grid(True)
 plt.xlabel('Smoothing radius (meep units)')
 plt.ylabel("Relative error")
+plt.title("Meep resolution: {}, MG resolution: {}".format(resolution,design_region_resolution))
 if mp.am_master():
     plt.savefig(filename+".png")
     np.savez(filename+".npz",filter_radius=filter_radius,radius_list=radius_list,design_region_resolution=design_region_resolution)

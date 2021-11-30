@@ -18,7 +18,7 @@ dy = 2.0
 filename = "beta_mag_sweep"
 filter_radius = 0.2
 
-beta_list = np.logspace(0,4,20).tolist()
+beta_list = np.logspace(0,5,20).tolist()
 
 # ---------------------------------------- #
 # main routine
@@ -63,7 +63,7 @@ sources = [mp.EigenModeSource(src=mp.GaussianSource(fcen,fwidth=df),
 matgrid = mp.MaterialGrid(mp.Vector3(Nx,Ny),
                             mp.air,
                             silicon,
-                            weights=np.ones((Nx,Ny)),
+                            weights=p,
                             do_averaging=True)
 
 matgrid_region = mpa.DesignRegion(matgrid,
@@ -127,7 +127,10 @@ l2_old_list = [] #l2 norm of the gradient without
 for bi, b in enumerate(beta_list):
     ''' test the new hybrid method and compute the l2 norm of the gradient'''
     opt.design_regions[0].design_parameters.do_averaging = True
-    opt.update_design([mapping(p,filter_radius)],beta=b)
+    opt.update_design([mapping(p,filter_radius)],beta=1e6)
+    opt.plot2D(True)
+    plt.show()
+    quit()
     f, adjsol_grad = opt()
     bp_adjsol_grad = tensor_jacobian_product(mapping,0)(p,filter_radius,adjsol_grad)
     l2_new_list.append(np.linalg.norm(bp_adjsol_grad))

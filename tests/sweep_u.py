@@ -86,10 +86,10 @@ sim = mp.Simulation(resolution=resolution,
 frequencies = [fcen]
 
 obj_list = [mpa.EigenmodeCoefficient(sim,
-                                    mp.Volume(center=mp.Vector3(0.5*sxy-dpml-0.1),
-                                    size=mp.Vector3(0,sxy-2*dpml,0)),
-                                    1,
-                                    eig_parity=eig_parity)]
+            mp.Volume(center=mp.Vector3(+0.5*sxy-dpml-0.1),
+            size=mp.Vector3(0,sxy-2*dpml,0)),
+            1,
+            eig_parity=eig_parity)]
 
 def J(mode_mon):
     return npa.power(npa.abs(mode_mon),2)
