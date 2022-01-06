@@ -311,9 +311,11 @@ quit()'''
 if __name__ == '__main__':
     algorithm = nlopt.LD_MMA
     n = Nx * Ny
+    scale = 2
     if args.init_condition == 0:
         beta = [8, 32, np.inf]
     else:
+        scale = 4
         beta = [np.inf]
     
     for iters in range(len(beta)):
@@ -323,7 +325,7 @@ if __name__ == '__main__':
         solver.set_min_objective(lambda a,g: f(a,g,beta[iters]))
         solver.set_maxeval(maxeval)
         if iters == len(beta)-1:
-            solver.set_maxeval(2*maxeval)
+            solver.set_maxeval(scale*maxeval)
         #if iters == len(beta)-1:
         #    solver.add_inequality_mconstraint(constraints,[0]*2)
 
